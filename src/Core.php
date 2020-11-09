@@ -10,6 +10,7 @@ namespace EasySwoole\EasySwoole;
 
 
 use EasySwoole\Command\Color;
+use EasySwoole\Command\CommandManager;
 use EasySwoole\Component\Di;
 use EasySwoole\Component\Process\Manager;
 use EasySwoole\Component\Singleton;
@@ -233,6 +234,7 @@ class Core
             }
             $dispatcher = Dispatcher::getInstance($namespace, $depth, $max);
             $dispatcher->setControllerPoolWaitTime($waitTime);
+            //补充HTTP_EXCEPTION_HANDLER默认回调
             $httpExceptionHandler = Di::getInstance()->get(SysConst::HTTP_EXCEPTION_HANDLER);
             if (!is_callable($httpExceptionHandler)) {
                 $httpExceptionHandler = function ($throwable, $request, $response) {
@@ -244,7 +246,7 @@ class Core
             }
             $dispatcher->setHttpExceptionHandler($httpExceptionHandler);
             $requestHook = Di::getInstance()->get(SysConst::HTTP_GLOBAL_ON_REQUEST);
-            $afterRequestHook = Di::getInstance()->get(SysConst::HTTP_GLOBAL_ON_REQUEST);
+            $afterRequestHook = Di::getInstance()->get(SysConst::HTTP_GLOBAL_AFTER_REQUEST);
             EventHelper::on($server, EventRegister::onRequest, function (SwooleRequest $request, SwooleResponse $response) use ($dispatcher, $requestHook, $afterRequestHook) {
                 $request_psr = new Request($request);
                 $response_psr = new Response($response);
@@ -299,9 +301,6 @@ class Core
         });
 
         EventHelper::registerWithAdd($register, $register::onWorkerStop, function () {
-            $table = Manager::getInstance()->getProcessTable();
-            $pid = getmypid();
-            $table->del($pid);
             Timer::clearAll();
             SwooleEvent::exit();
         });
@@ -310,6 +309,10 @@ class Core
          * 开启reload async的时候，清理事件
          */
         EventHelper::registerWithAdd($register, $register::onWorkerExit, function () {
+            //当worker非正常退出的时候，不会走worker stop事件，因此移动到exit事件清除
+            $table = Manager::getInstance()->getProcessTable();
+            $pid = getmypid();
+            $table->del($pid);
             Timer::clearAll();
             SwooleEvent::exit();
         });
@@ -317,6 +320,11 @@ class Core
 
     public function loadEnv()
     {
+        $mode = CommandManager::getInstance()->getOpt('mode');
+        if (!empty($mode)) {
+            $this->runMode($mode);
+        }
+
         $file = EASYSWOOLE_ROOT . "/{$this->runMode}.php";
         if (!file_exists($file)) {
             die(Color::error("can not load config file {$this->runMode}.php") . "\n");
